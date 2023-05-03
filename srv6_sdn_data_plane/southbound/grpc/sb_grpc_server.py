@@ -1320,6 +1320,9 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
             )
 
     def Execute(self, op, request, context):
+
+        logging.info('============= operation: %s', op)
+
         entity_type = request.entity_type
         # Handle operation
         # The operation to be executed depends on
@@ -1693,7 +1696,7 @@ if __name__ == '__main__':
         logging.getLogger().setLevel(level=logging.INFO)
     # Debug settings
     server_debug = logger.getEffectiveLevel() == logging.DEBUG
-    logging.info('SERVER_DEBUG:' + str(server_debug))
+    logging.info('&&&SERVER_DEBUG:' + str(server_debug))
     # Start the server
     start_server(
         grpc_ip,

@@ -8,6 +8,7 @@ import os
 import signal
 import threading
 import logging
+import time
 from filelock import FileLock, Timeout
 from functools import partial
 from argparse import ArgumentParser
@@ -31,9 +32,13 @@ SUPPORTED_SB_INTERFACES = ['gRPC']
 logger = logging.getLogger(__name__)
 # Server ip and port
 DEFAULT_GRPC_SERVER_IP = '::'
+# DEFAULT_GRPC_SERVER_IP = '0.0.0.0'
 DEFAULT_GRPC_SERVER_PORT = 12345
+
 # Debug option
-SERVER_DEBUG = False
+# SERVER_DEBUG = False
+SERVER_DEBUG = True
+
 # Secure option
 DEFAULT_SECURE = False
 # Server certificate
@@ -42,8 +47,12 @@ DEFAULT_CERTIFICATE = 'cert_server.pem'
 DEFAULT_KEY = 'key_server.pem'
 # Default southbound interface
 DEFAULT_SB_INTERFACE = 'gRPC'
+
 # Default verbose mode
-DEFAULT_VERBOSE = False
+# DEFAULT_VERBOSE = False
+DEFAULT_VERBOSE = True
+
+
 # Default server IP
 DEFAULT_PYMERANG_SERVER_IP = '::'
 # Port of the gRPC server executing on the controller
@@ -106,10 +115,13 @@ class EWEdgeDevice(object):
         incoming_sr_transparency=DEFAULT_INCOMING_SR_TRANSPARENCY,
         outgoing_sr_transparency=DEFAULT_OUTGOING_SR_TRANSPARENCY,
         allow_reboot=False,
-        verbose=DEFAULT_VERBOSE
+        verbose=True,
+        # verbose=DEFAULT_VERBOSE
     ):
         # Verbose mode
-        self.VERBOSE = verbose
+        # self.VERBOSE = verbose
+        self.VERBOSE = True
+
         if self.VERBOSE:
             print('*** Initializing controller variables')
         # Initialize variables
@@ -176,7 +188,10 @@ class EWEdgeDevice(object):
         self.outgoing_sr_transparency = outgoing_sr_transparency
         # Is reboot allowed?
         self.allow_reboot = allow_reboot
-        # Print configuration
+        
+        
+        
+
         if self.VERBOSE:
             print()
             print('Configuration')
@@ -241,6 +256,10 @@ class EWEdgeDevice(object):
         )
         # Run registration client
         registration_client.run()
+
+
+
+
 
     def init_ew_edge_device(self):
         # Enable Proxy NDP
@@ -763,7 +782,7 @@ def _main():
     #
     # Check debug level
     SERVER_DEBUG = logger.getEffectiveLevel() == logging.DEBUG
-    logger.info('SERVER_DEBUG:' + str(SERVER_DEBUG))
+    logger.info('***SERVER_DEBUG:' + str(SERVER_DEBUG))
     # Check interfaces file, dataplane and gRPC client paths
     if sb_interface not in SUPPORTED_SB_INTERFACES:
         logging.error(
@@ -832,23 +851,24 @@ def _main():
         logging.fatal('EveryEdge must run as root')
         exit(-1)
 
-    try:
-        # Lock PID file
-        with FileLock(PIDFILE, timeout=0):
-            # Write PID of the current process to the PID file
-            with open(PIDFILE, 'w') as f:
-                f.write(f'{os.getpid()}\n')
-            # Start the edge device
-            ew_edge_device.run()
-            # Remove PID file on exit
-            os.remove(PIDFILE)
-    except Timeout:
-        # Could not lock PID file
-        logging.fatal(
-            f'Could not lock PID file {PIDFILE}. Exiting. Please ensure that '
-            'EveryEdge is not already running.'
-        )
-        exit(-1)
+    # try:
+    #     # Lock PID file
+    #     with FileLock(PIDFILE, timeout=0):
+    #         # Write PID of the current process to the PID file
+    #         with open(PIDFILE, 'w') as f:
+    #             f.write(f'{os.getpid()}\n')
+    #         # Start the edge device
+    #         ew_edge_device.run()
+    #         # Remove PID file on exit
+    #         os.remove(PIDFILE)
+    # except Timeout:
+    #     # Could not lock PID file
+    #     logging.fatal(
+    #         f'Could not lock PID file {PIDFILE}. Exiting. Please ensure that '
+    #         'EveryEdge is not already running.'
+    #     )
+    #     exit(-1)
+    ew_edge_device.run()
 
 
 if __name__ == '__main__':

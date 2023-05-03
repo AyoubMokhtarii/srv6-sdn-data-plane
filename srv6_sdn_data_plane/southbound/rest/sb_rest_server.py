@@ -219,7 +219,7 @@ def parse_options():
   else:
     logging.basicConfig(level=logging.INFO)
   SERVER_DEBUG = logger.getEffectiveLevel() == logging.DEBUG
-  logger.info("SERVER_DEBUG:" + str(SERVER_DEBUG))
+  logger.info("@@@SERVER_DEBUG:" + str(SERVER_DEBUG))
   # Return secure/insecure mode
   if options.secure:
     REST_PORT = 443
