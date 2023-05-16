@@ -440,6 +440,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
 
     def HandleIPRuleRequest(self, op, request, context):
         logging.debug('config received:\n%s', request)
+
         # Let's process the request
         try:
             if op == 'add' or op == 'del':
@@ -458,7 +459,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     out_interface = rule.out_interface
                     # Check optional fields
                     table = table if table != -1 else None
-                    priority = priority if priority != -1 else None
+                    priority = priority if priority != -1 else (self._get_lowest_priority_rule() -1)
                     action = action if action != '' else None
                     scope = scope if scope != -1 else None
                     destination = destination if destination != '' else None
@@ -469,6 +470,25 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     out_interface = (
                         out_interface if out_interface != '' else None
                     )
+
+                    # # FIXME remmove this just for debug -------------------------------------------------------
+                    # logging.info('|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||')
+                    # logging.info('op: %s', op)
+                    # logging.info('family: %s', family)
+                    # logging.info('table: %s', table)
+                    # logging.info('priority: %s', priority)
+                    # logging.info('action: %s', action)
+                    # logging.info('scope: %s', scope)
+                    # logging.info('destination: %s', destination)
+                    # logging.info('dst_len: %s', dst_len)
+                    # logging.info('source: %s', source)
+                    # logging.info('src_len: %s', src_len)
+                    # logging.info('in_interface: %s', in_interface)
+                    # logging.info('out_interface: %s', out_interface)
+                    # logging.info('|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||')
+                    # # --------------------------------------------------------------------------------------------
+
+
                     # Create or delete the rule
                     ip_route.rule(
                         op,
@@ -541,6 +561,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                         else None
                     )
                     gateway = gateway if gateway != '' else None
+                    
                     # Let's push the route
                     if destination is None and op == 'del':
                         # Destination not specified, delete all the routes
@@ -799,6 +820,15 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
             )
 
     def HandleVRFDeviceRequest(self, op, request, context):
+
+        # FIXME remove this just logging ----------------------------------------------------------------------
+        logging.info("\n&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&& HandleVRFDeviceRequest - op: %s\n", op)
+        logging.info("request : ")
+        logging.info(request) 
+        logging.info("\n&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&\n\n\n")
+        # ------------------------------------------------------------------------------------------------------
+
+
         logging.debug('config received:\n%s', request)
         # Let's process the request
         try:
@@ -844,6 +874,12 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                         status=status_codes_pb2.STATUS_SUCCESS
                     )
             elif op == 'change':
+                # FIXME remove this just logging ----------------------------------------------------------------------
+                logging.info("\n\######################33333####### op == change : n")
+                logging.info("request : ")
+                logging.info(request)
+
+                # --------------------------------------------------------------------------------------------------
                 for device in request.devices:
                     if device.op == 'add_interfaces':
                         # Get the VRF index
@@ -1167,6 +1203,23 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
             # Let's push the vxlan command
             if op == 'add':
                 # Create VTEP
+
+                # FIXME remove this just logging  ---------------------------------------------------------
+                logging.info("\n\n\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n")
+                logging.info(ifname)
+                logging.info(ip_route.link_lookup(ifname=vxlan_link)[0])
+                logging.info(vxlan_id)
+                logging.info(vxlan_port)
+                logging.info(vxlan_group)
+                logging.info("\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@\n\n\n")
+                logging.info("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n")
+                logging.info(request)
+                logging.info("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n")
+
+
+                # FIXME -----------------------------------------------------------------------------------
+
+
                 if getAddressFamily(vxlan_group) == AF_INET:
                     ip_route.link(
                         op,
@@ -1388,6 +1441,18 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
     def Remove(self, request, context):
         # Handle Remove operation
         return self.Execute('del', request, context)
+    
+    def _get_lowest_priority_rule(self):
+        rules = list(ip_route.get_rules())
+        prio = None
+        lowest_priority = None
+        for rule in rules:
+            for attr in rule['attrs']:
+                if attr[0] == 'FRA_PRIORITY':
+                    prio = attr[1]
+                    if lowest_priority is None or prio < lowest_priority:
+                        lowest_priority = prio
+        return lowest_priority
 
 
 class NetworkEventsListener(
