@@ -81,3 +81,7 @@ class SouthboundGRPCError(Exception):
 
 class InvalidAddressFamilyError(SouthboundGRPCError):
     pass
+
+
+class InvalidIPTablesRequestError(SouthboundGRPCError):
+    pass

@@ -19,6 +19,8 @@ from socket import AF_UNSPEC
 from pyroute2.netlink.exceptions import NetlinkError
 from pyroute2.netlink.rtnl import ndmsg
 
+import iptc
+
 if sys.version_info >= (3, 0):
     from pyroute2.netlink.nlsocket import Stats  # noqa F401
 
@@ -57,7 +59,7 @@ from srv6_sdn_proto import gre_interface_pb2
 # from srv6_sdn_proto import ip_tunnel_interface_pb2
 from srv6_sdn_proto.ip_tunnel_interface_pb2 import IPTunnelType
 # from .sb_grpc_utils import InvalidAddressFamilyError
-from .sb_grpc_utils import InvalidAddressFamilyError, getAddressFamily
+from .sb_grpc_utils import InvalidAddressFamilyError, getAddressFamily, InvalidIPTablesRequestError
 
 # STAMP Support
 ENABLE_STAMP_SUPPORT = True
@@ -1372,6 +1374,124 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                 status=self.parse_netlink_error(e)
             )
 
+    # Add or delete iptables rules
+    def HandleIptablesRuleRequest(self, op, request, context):
+        # FIXME You Should add validation to the request params,
+        # either here or in the parent function.
+        #
+        #
+        # FIXME This is a very naive implementation, it should be improved, Error handling, params validation, etc.
+
+
+        logging.debug('config received:\n%s', request)
+
+        # Let's process the request
+        try:
+            if op == 'add' or op == 'del':
+                for rule in request.rules:
+                    # Extract  from the request
+                    table = rule.table
+                    chain = rule.chain
+                    protocol = rule.protocol
+                    source_ip = rule.source_ip
+                    destination_ip = rule.destination_ip
+                    source_port = rule.source_port
+                    destination_port = rule.destination_port
+                    target_name = rule.target_name
+                    target_value = rule.target_value
+
+
+                    if table is None or table == '':
+                        # FIXME this should raise an error e.g InvalidIPTableError
+                        # FIXME Add validation to table 
+                        raise InvalidIPTablesRequestError
+
+                    if chain is None or chain == '':
+                        # FIXME this should raise an error e.g InvalidIPTableChainError
+                        raise InvalidIPTablesRequestError
+
+                    if target_name is None or target_name == '':
+                        # FIXME this should raise an error e.g InvalidIPTableTargetError
+                        raise InvalidIPTablesRequestError
+
+
+
+                    # Initialize the iptables rule
+                    iptables_rule = iptc.Rule()
+                    
+
+                    
+                    if (source_ip is not None and source_ip != ''): iptables_rule.src = source_ip
+                    if (destination_ip is not None and destination_ip != ""): iptables_rule.dst = destination_ip
+
+                    # FIXME Add validation for protocol
+                    if (protocol is not None and protocol != ''):
+                        iptables_rule.protocol = protocol
+
+                        if (source_port is not None and source_port != '') \
+                             or (destination_port is not None and destination_port != ''):
+
+
+                            # Init the iptables Match if the source_port / destination_port is provided 
+                            iptables_match = iptc.Match(iptables_rule, iptables_rule.protocol)
+                            if (source_port is not None and source_port != ''): iptables_match.sport = source_port
+                            if (destination_port is not None and destination_port != ''): iptables_match.dport = destination_port
+
+                            # Add the match to the rule 
+                            iptables_rule.add_match(iptables_match)
+
+
+
+                    # get the reference of the iptc.table
+                    iptables_table = iptc.Table(table)
+
+                    # enble the iptc table autocommit 
+                    if not iptables_table.autocommit:
+                        iptables_table.autocommit = True
+
+                    # Initialize the chain
+                    iptables_chain = iptc.Chain(iptables_table, chain)
+
+                    # Init the Target
+                    iptables_target = iptc.Target(iptables_rule, target_name)
+
+                    # Validate the target and the target value 
+                    if target_name == 'MARK':
+                        iptables_target.set_mark = target_value
+                    else:
+                        # TODO Throw an error : NotImplementedError
+                        raise NotImplementedError
+
+                    # Add the target to the rule 
+                    iptables_rule.target = iptables_target
+
+                    if op == 'add':
+                        # Add the rule to the chain
+                        iptables_chain.insert_rule(iptables_rule)
+                        logging.debug('Added iptables rule: %s', iptables_rule)
+                    elif op == 'del':
+                        # Delete the rule from the chain
+                        iptables_chain.delete_rule(iptables_rule)
+                        logging.debug('Deleted iptables rule: %s', iptables_rule)
+            else:
+                # Operation unknown: this is a bug
+                logging.error('Unrecognized operation: %s', op)
+
+            # Create and send the response
+            logging.debug('Send response: OK')
+
+            return srv6_manager_pb2.SRv6ManagerReply(
+                    status=status_codes_pb2.STATUS_SUCCESS
+                )
+        except Exception as e:
+            logging.debug("\n !!! EXCEPTION : ", e)
+            return srv6_manager_pb2.SRv6ManagerReply(
+                            status=status_codes_pb2.STATUS_INTERNAL_ERROR
+                        )
+             
+
+
+
     def Execute(self, op, request, context):
 
         logging.info('============= operation: %s', op)
@@ -1421,6 +1541,13 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
         elif entity_type == srv6_manager_pb2.IPTunnel:
             request = request.iptunnel_request
             return self.HandleIPTunnelRequest(op, request, context)
+        
+
+        elif entity_type == srv6_manager_pb2.IPTablesRule:
+            request = request.iptables_rule_request
+            return self.HandleIptablesRuleRequest(op, request, context)
+
+
         else:
             return srv6_manager_pb2.SRv6ManagerReply(
                 status=status_codes_pb2.STATUS_INVALID_GRPC_REQUEST
