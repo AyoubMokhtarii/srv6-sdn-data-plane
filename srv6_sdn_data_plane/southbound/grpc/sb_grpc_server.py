@@ -459,6 +459,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     src_len = rule.src_len
                     in_interface = rule.in_interface
                     out_interface = rule.out_interface
+                    fwmark = rule.fwmark
                     # Check optional fields
                     table = table if table != -1 else None
                     priority = priority if priority != -1 else (self._get_lowest_priority_rule() -1)
@@ -472,6 +473,8 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     out_interface = (
                         out_interface if out_interface != '' else None
                     )
+
+                    fwmark = fwmark if fwmark != -1 else None
 
                     # # FIXME remmove this just for debug -------------------------------------------------------
                     # logging.info('|||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||')
@@ -504,7 +507,9 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                         src=source,
                         src_len=src_len,
                         iifname=in_interface,
-                        oifname=out_interface
+                        oifname=out_interface,
+                        fwmark=fwmark
+
                     )
             else:
                 # Operation unknown: this is a bug
@@ -1383,12 +1388,18 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
         # FIXME This is a very naive implementation, it should be improved, Error handling, params validation, etc.
 
 
+
+        
+
+
+
         logging.debug('config received:\n%s', request)
 
         # Let's process the request
         try:
             if op == 'add' or op == 'del':
                 for rule in request.rules:
+
                     # Extract  from the request
                     table = rule.table
                     chain = rule.chain
@@ -1399,7 +1410,6 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     destination_port = rule.destination_port
                     target_name = rule.target_name
                     target_value = rule.target_value
-
 
                     if table is None or table == '':
                         # FIXME this should raise an error e.g InvalidIPTableError
@@ -1413,6 +1423,15 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     if target_name is None or target_name == '':
                         # FIXME this should raise an error e.g InvalidIPTableTargetError
                         raise InvalidIPTablesRequestError
+                    
+
+                    match_name = rule.match.match_name
+                    match_attributes = list()
+                    for attr in rule.match.match_attributes:
+                        attrib = dict()
+                        attrib["attribute_name"] = str(attr.attribute_name)
+                        attrib["attribute_value"] = str(attr.attribute_value)
+                        match_attributes.append(attrib)
 
 
 
@@ -1440,6 +1459,34 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                             # Add the match to the rule 
                             iptables_rule.add_match(iptables_match)
 
+                    # Handle the statistic mode match. 
+                    # TODO add more validation and other match names.
+                    if match_name == 'statistic':
+                        match_statistic_mode = None
+                        match_statistic_every = None
+                        match_statistic_packet = None
+                        for attribute in match_attributes :
+                            if attribute['attribute_name'] == 'mode':
+                                match_statistic_mode = attribute['attribute_value']
+                                if match_statistic_mode != 'nth':
+                                    raise NotImplementedError
+                            elif attribute['attribute_name'] == 'every':
+                                match_statistic_every = attribute['attribute_value']
+                            elif attribute['attribute_name'] == 'packet':
+                                match_statistic_packet = attribute['attribute_value']
+                            else :
+                                raise NotImplementedError
+                            
+                        match_statistic = iptc.Match(iptables_rule, "statistic")
+                        if match_statistic_mode != None : 
+                            match_statistic.mode = match_statistic_mode
+                        if match_statistic_every != None :
+                            match_statistic.every = match_statistic_every
+                        if match_statistic_packet != None :
+                            match_statistic.packet = match_statistic_packet
+
+                        iptables_rule.add_match(match_statistic)
+                    
 
 
                     # get the reference of the iptc.table
@@ -1461,6 +1508,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     else:
                         # TODO Throw an error : NotImplementedError
                         raise NotImplementedError
+  
 
                     # Add the target to the rule 
                     iptables_rule.target = iptables_target
@@ -1484,7 +1532,7 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     status=status_codes_pb2.STATUS_SUCCESS
                 )
         except Exception as e:
-            logging.debug("\n !!! EXCEPTION : ", e)
+            logging.error("\n !!! EXCEPTION : ", e)
             return srv6_manager_pb2.SRv6ManagerReply(
                             status=status_codes_pb2.STATUS_INTERNAL_ERROR
                         )
