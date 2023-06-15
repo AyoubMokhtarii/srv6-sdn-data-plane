@@ -20,6 +20,8 @@ from pyroute2.netlink.exceptions import NetlinkError
 from pyroute2.netlink.rtnl import ndmsg
 
 import iptc
+import subprocess
+import re
 
 if sys.version_info >= (3, 0):
     from pyroute2.netlink.nlsocket import Stats  # noqa F401
@@ -1411,6 +1413,10 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     target_name = rule.target_name
                     target_value = rule.target_value
 
+                    in_interface = rule.in_interface
+                    out_interface = rule.out_interface
+
+
                     if table is None or table == '':
                         # FIXME this should raise an error e.g InvalidIPTableError
                         # FIXME Add validation to table 
@@ -1442,6 +1448,8 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     
                     if (source_ip is not None and source_ip != ''): iptables_rule.src = source_ip
                     if (destination_ip is not None and destination_ip != ""): iptables_rule.dst = destination_ip
+                    if (in_interface is not None and in_interface != ""): iptables_rule.in_interface = in_interface
+                    if (out_interface is not None and out_interface != ""): iptables_rule.out_interface = out_interface
 
                     # FIXME Add validation for protocol
                     if (protocol is not None and protocol != ''):
@@ -1461,31 +1469,53 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
 
                     # Handle the statistic mode match. 
                     # TODO add more validation and other match names.
-                    if match_name == 'statistic':
-                        match_statistic_mode = None
-                        match_statistic_every = None
-                        match_statistic_packet = None
-                        for attribute in match_attributes :
-                            if attribute['attribute_name'] == 'mode':
-                                match_statistic_mode = attribute['attribute_value']
-                                if match_statistic_mode != 'nth':
+                    if match_name is not None and match_name != '':
+                        if match_name == 'statistic':
+                            match_statistic_mode = None
+                            match_statistic_every = None
+                            match_statistic_packet = None
+                            for attribute in match_attributes :
+                                if attribute['attribute_name'] == 'mode':
+                                    match_statistic_mode = attribute['attribute_value']
+                                    if match_statistic_mode != 'nth':
+                                        raise NotImplementedError
+                                elif attribute['attribute_name'] == 'every':
+                                    match_statistic_every = attribute['attribute_value']
+                                elif attribute['attribute_name'] == 'packet':
+                                    match_statistic_packet = attribute['attribute_value']
+                                else :
                                     raise NotImplementedError
-                            elif attribute['attribute_name'] == 'every':
-                                match_statistic_every = attribute['attribute_value']
-                            elif attribute['attribute_name'] == 'packet':
-                                match_statistic_packet = attribute['attribute_value']
-                            else :
-                                raise NotImplementedError
-                            
-                        match_statistic = iptc.Match(iptables_rule, "statistic")
-                        if match_statistic_mode != None : 
-                            match_statistic.mode = match_statistic_mode
-                        if match_statistic_every != None :
-                            match_statistic.every = match_statistic_every
-                        if match_statistic_packet != None :
-                            match_statistic.packet = match_statistic_packet
 
-                        iptables_rule.add_match(match_statistic)
+                            match_statistic = iptc.Match(iptables_rule, "statistic")
+                            if match_statistic_mode != None : 
+                                match_statistic.mode = match_statistic_mode
+                            if match_statistic_every != None :
+                                match_statistic.every = match_statistic_every
+                            if match_statistic_packet != None :
+                                match_statistic.packet = match_statistic_packet
+
+                            iptables_rule.add_match(match_statistic)
+
+                        elif match_name == 'mark':
+                            match_mark_value = None
+
+                            for attribute in match_attributes :
+                                if attribute['attribute_name'] == 'mark':
+                                    match_mark_value = attribute['attribute_value']
+                                    break
+                                else :
+                                    raise NotImplementedError
+
+
+                            if match_mark_value != None :
+                                match_mark = iptc.Match(iptables_rule, "mark")
+                                match_mark.mark = str(match_mark_value)
+                                iptables_rule.add_match(match_mark)
+                        else: 
+                            raise NotImplementedError
+
+                    
+
                     
 
 
@@ -1505,9 +1535,11 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     # Validate the target and the target value 
                     if target_name == 'MARK':
                         iptables_target.set_mark = target_value
-                    else:
-                        # TODO Throw an error : NotImplementedError
-                        raise NotImplementedError
+                    # if target_name == 'ACCEPT':
+                    #     pass
+                    # else:
+                    #     # TODO Throw an error : NotImplementedError
+                    #     raise NotImplementedError
   
 
                     # Add the target to the rule 
@@ -1532,11 +1564,116 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     status=status_codes_pb2.STATUS_SUCCESS
                 )
         except Exception as e:
-            logging.error("\n !!! EXCEPTION : ", e)
+            logging.error("\nEXCEPTION ! : ", e)
             return srv6_manager_pb2.SRv6ManagerReply(
                             status=status_codes_pb2.STATUS_INTERNAL_ERROR
                         )
              
+    def HandleIPTablesStatisticsRequest(self, op, request, context):
+
+
+        logging.debug('config received:\n%s', request)
+        # Let's process the request
+        try:
+            if op == 'get':
+                # Handle get operation
+                # Get the interfaces
+                statistics = self._get_iptables_rules_marked_with_out_interface_stats(_table=None, _chain=None)
+                response = srv6_manager_pb2.SRv6ManagerReply(
+                    status=status_codes_pb2.STATUS_SUCCESS
+                )
+                for stat in statistics:
+                    rule_stats = response.iptables_rules_statistics.add()
+                    rule_stats.packet_count = str(stat['packets'])
+                    rule_stats.byte_count = str(stat['bytes'])
+                    rule_stats.rule_mark_value = str(stat['out_interface'])
+
+                    # rule_mark_value = stat['rule_desc']['set-xmark'][0]
+                    # rule_mark_value = int(rule_mark_value.split('/')[0], 16)
+                    # rule_stats.rule_mark_value = str(rule_mark_value)
+
+                return response
+
+            else:
+                # Operation unknown: this is a bug
+                logging.error('Unrecognized operation: %s', op)
+
+
+        except Exception as e:
+            logging.error("\nEXCEPTION ! : ", e)
+            return srv6_manager_pb2.SRv6ManagerReply(
+                            status=status_codes_pb2.STATUS_INTERNAL_ERROR
+                        )
+        
+            
+    def HandleTunnelDelayStatsRequest(self, op, request, context):
+        logging.debug('config received:\n%s', request)
+        # Let's process the request
+        try:
+            if op == 'get':
+                # Perform a ping from the 1st tunnel end-point to the 2nd tunnel end-point.
+                
+                delay_stat = dict()
+                delay_stats = list()
+
+
+                # # FIXME remove this ----------------------------------------------------------------
+
+                # logging.info("\n\n\n>>>request.tunnels>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+                # logging.info(request.tunnels)
+                # logging.info(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>\n\n\n")
+                # # FIXME remove this ----------------------------------------------------------------
+
+                
+                for tunnel_delay_request in request.tunnels:
+                    # Extract  from the request
+                    tunnel_interface_name = tunnel_delay_request.tunnel_interface_name
+                    tunnel_interface_name = str(tunnel_interface_name)
+                    tunnel_src_endpoint = tunnel_delay_request.tunnel_src_endpoint
+                    tunnel_dst_endpoint = tunnel_delay_request.tunnel_dst_endpoint
+
+
+                    tunnel_delay = self._get_tunnel_delay(tunnel_name=tunnel_interface_name,
+                                                   endpoint_destination=tunnel_dst_endpoint)
+                    
+                    tunnel_delay = str(tunnel_delay)
+                    delay_stat = dict()
+                    delay_stat['tunnel_interface_name'] = tunnel_interface_name
+                    delay_stat['tunnel_dst_endpoint'] = tunnel_dst_endpoint
+                    delay_stat['tunnel_src_endpoint'] = tunnel_src_endpoint
+                    delay_stat['tunnel_delay'] = tunnel_delay
+                    delay_stats.append(delay_stat)
+
+                # # FIXME remove this ----------------------------------------------------------------
+
+                # logging.info("\n\n\ndelay_stats<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<")
+                # logging.info(delay_stats)
+                # logging.info("<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<.<\n\n\n")
+                # # FIXME remove this ----------------------------------------------------------------
+                    
+
+                response = srv6_manager_pb2.SRv6ManagerReply(
+                        status=status_codes_pb2.STATUS_SUCCESS
+                    )
+                # Create and send the response
+                for delay_stat in delay_stats:
+                    
+
+                    tunnel_delay = response.tunnel_delay.add()
+                    tunnel_delay.tunnel_interface_name = delay_stat['tunnel_interface_name']
+                    tunnel_delay.tunnel_dst_endpoint = delay_stat['tunnel_dst_endpoint']
+                    tunnel_delay.tunnel_src_endpoint = delay_stat['tunnel_src_endpoint']
+                    tunnel_delay.tunnel_delay = delay_stat['tunnel_delay']
+
+                return response
+           
+                
+        except Exception as e:
+            logging.error("\nEXCEPTION ! : ", e)
+            return srv6_manager_pb2.SRv6ManagerReply(
+                            status=status_codes_pb2.STATUS_INTERNAL_ERROR
+                        )
+
 
 
 
@@ -1551,50 +1688,67 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
         if entity_type == srv6_manager_pb2.SRv6ExplicitPath:
             request = request.srv6_ep_request
             return self.HandleSRv6ExplicitPathRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.SRv6LocalProcessingFunction:
             request = request.srv6_lpf_request
             return self.HandleSRv6LocalProcessingFunctionRequest(
                 op, request, context
             )
+
         elif entity_type == srv6_manager_pb2.IPAddr:
             request = request.ipaddr_request
             if USE_ZEBRA:
                 return self.HandleIPAddrRequest(op, request, context)
             else:
                 return self.HandleIPAddrPyroute2Request(op, request, context)
+
         elif entity_type == srv6_manager_pb2.IPRule:
             request = request.iprule_request
             return self.HandleIPRuleRequest(op, request, context)
+
         elif entity_type == srv6_manager_pb2.IPRoute:
             request = request.iproute_request
             return self.HandleIPRouteRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.VRFDevice:
             request = request.vrf_device_request
             return self.HandleVRFDeviceRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.Interface:
             request = request.interface_request
             return self.HandleInterfaceRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.IPNeigh:
             request = request.ipneigh_request
             return self.HandleIPNeighRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.GREInterface:
             request = request.gre_interface_request
             return self.HandleGREInterfaceRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.IPVxlan:
             request = request.ipvxlan_request
             return self.HandleIPVxLANRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.IPfdbentries:
             request = request.fdbentries_request
             return self.HandleIPfdbentriesRequest(op, request, context)
+        
         elif entity_type == srv6_manager_pb2.IPTunnel:
             request = request.iptunnel_request
             return self.HandleIPTunnelRequest(op, request, context)
-        
 
         elif entity_type == srv6_manager_pb2.IPTablesRule:
             request = request.iptables_rule_request
             return self.HandleIptablesRuleRequest(op, request, context)
-
+        
+        elif entity_type == srv6_manager_pb2.IPTablesRuleStatistics:
+            request = request.iptables_statistics_request
+            return self.HandleIPTablesStatisticsRequest(op, request, context)
+        
+        elif entity_type == srv6_manager_pb2.TunnelDelay:
+            request = request.tunnels_delay_request
+            return self.HandleTunnelDelayStatsRequest(op, request, context)
 
         else:
             return srv6_manager_pb2.SRv6ManagerReply(
@@ -1629,6 +1783,85 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                         lowest_priority = prio
         return lowest_priority
 
+    def _get_iptables_rules_marked_with_out_interface_stats(self, _table, _chain):
+
+        # FIXME remove this code --------------------------------------------------------------
+        # table = iptc.Table(iptc.Table.MANGLE)
+        # chain = iptc.Chain(table, "PREROUTING")
+        
+        # stats = []
+        # table.refresh()
+        # for rule in chain.rules:
+        #     (packets, bytess) = rule.get_counters()
+        #     # matches = rule._get_matches()
+        #     rule_desc = rule.target.get_all_parameters()
+        #     # 
+        #     # stats.append((packets, bytess, rule_desc))
+        #     stats.append({
+        #         'packets': packets,
+        #         'bytes': bytess,
+        #         'rule_desc': rule_desc
+        #     })
+        # FIXME  -------------------------------------------------------------------------------END
+
+
+
+        # FIXME the table and chain should be passed as parameters (from the request)
+        table = iptc.Table(iptc.Table.MANGLE)
+        chain = iptc.Chain(table, "FORWARD")
+        stats = []
+        table.refresh()
+        for rule in chain.rules:
+            
+            out_interface = rule.out_interface
+            if out_interface is not None and out_interface != 'any':
+                (packets, bytess) = rule.get_counters()
+                stats.append({
+                            'packets': packets,
+                            'bytes': bytess,
+                            'out_interface': out_interface
+                        })
+
+    
+
+        # FIXME -------------------------------------------------------------------------------START
+        # logging.info('\n\n\nstats : ')
+        # logging.info(stats['packets'])
+        # logging.info(stats['bytes'])
+        # logging.info(stats['mark_value'])
+        # FIXME -------------------------------------------------------------------------------END
+
+
+        return stats
+        
+
+    def _get_tunnel_delay(self, tunnel_name, endpoint_destination):
+        ECHO_NUMBER = 1
+        destination = endpoint_destination
+        out_interface = tunnel_name
+
+        ping_command = f"ping -c {ECHO_NUMBER} -I {out_interface} {destination}"  # Send 3 ICMP echo requests
+        # # FIXME remove this just logging ---------------------------------------------------------------------------
+        # logging.info("\n\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        # logging.info(ping_command)
+        # logging.info("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n")
+
+        # # FIXME remove this just logging ---------------------------------------------------------------------------
+
+        ping_process = subprocess.Popen(ping_command, stdout=subprocess.PIPE, shell=True)
+        mean_delay = 0
+
+        for line in ping_process.stdout:
+            line = line.decode().strip()  # Convert bytes to string and remove leading/trailing spaces
+            if "time=" in line:
+                delay = re.search(r"time=(\d+\.?\d*)", line)
+                if delay:
+                    delay_value = float(delay.group(1))
+                    mean_delay += delay_value
+
+        mean_delay = round((mean_delay/ECHO_NUMBER), 2)
+        
+        return mean_delay
 
 class NetworkEventsListener(
     network_events_listener_pb2_grpc.NetworkEventsListenerServicer
