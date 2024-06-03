@@ -1519,22 +1519,22 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     
 
 
-                    # get the reference of the iptc.table
                     iptables_table = iptc.Table(table)
 
-                    # enble the iptc table autocommit 
                     if not iptables_table.autocommit:
                         iptables_table.autocommit = True
 
-                    # Initialize the chain
                     iptables_chain = iptc.Chain(iptables_table, chain)
 
-                    # Init the Target
                     iptables_target = iptc.Target(iptables_rule, target_name)
 
-                    # Validate the target and the target value 
+                    
                     if target_name == 'MARK':
                         iptables_target.set_mark = target_value
+                    
+                    if target_name == 'DNAT':
+                        iptables_target.to_destination = target_value
+
                     # if target_name == 'ACCEPT':
                     #     pass
                     # else:
@@ -1542,22 +1542,17 @@ class SRv6Manager(srv6_manager_pb2_grpc.SRv6ManagerServicer):
                     #     raise NotImplementedError
   
 
-                    # Add the target to the rule 
                     iptables_rule.target = iptables_target
 
                     if op == 'add':
-                        # Add the rule to the chain
                         iptables_chain.insert_rule(iptables_rule)
                         logging.debug('Added iptables rule: %s', iptables_rule)
                     elif op == 'del':
-                        # Delete the rule from the chain
                         iptables_chain.delete_rule(iptables_rule)
                         logging.debug('Deleted iptables rule: %s', iptables_rule)
             else:
-                # Operation unknown: this is a bug
                 logging.error('Unrecognized operation: %s', op)
 
-            # Create and send the response
             logging.debug('Send response: OK')
 
             return srv6_manager_pb2.SRv6ManagerReply(
